@@ -13,3 +13,5 @@ build/
 dist/
 generated/
 logs/
+
+*.egg-info/
