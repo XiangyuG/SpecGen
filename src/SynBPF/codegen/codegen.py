@@ -71,7 +71,25 @@ def gen_rule_condition(rule):
 
     return f"(and {' '.join(conditions)})"
 
-    
+
+def gen_rule_call(rule, indent="    "):
+    """
+    Generate the Rosette code for calling a rule:
+    (let ([decision (KUBE_NODEPORTS srcPort srcIP dstPort dstIP protocol cstate)])
+         (if (not (bveq decision (bv 5 4)))
+             decision
+             NEXT))
+    """
+    fname = rule.target.lower().replace("-", "_")   # Rosette identifiers cannot have '-'
+    call = f"({fname} srcPort srcIP dstPort dstIP protocol cstate)"
+    result = (
+        f"(let ([decision {call}])\n"
+        f"{indent}  (if (not (bveq decision (bv 5 4)))\n"
+        f"{indent}        decision\n"
+        f"{indent}        NEXT))"
+    )
+    return result
+
 '''
 Input: a chain of iptable chains
 Output: Rosette specification code for the chain
@@ -80,39 +98,10 @@ def gen_chain_spec(chains):
     lines = []
     for chain in chains:
         fn = chain.name.lower().replace("-", "_")   # e.g., "INPUT" → chain name
-        lines.append(f"(define ({fn} srcPort srcIP dstPort dstIP protocol cstate)")
+        lines.append(f"(define ({fn} srcPort srcIP dstPort dstIP protocol ctstate)")
 
         indent = "  "
-
-        # build nested ifs
-        for rule in chain.rules:
-            cond = gen_rule_condition(rule)
-            lines.append(indent + f"(if {cond}")
-
-            tgt  = rule.target
-            if tgt in ACTIONS:
-                tgt = {
-                    "ACCEPT": "(bv 0 4)",
-                    "DROP":   "(bv 1 4)",
-                    "DNAT":   "(bv 2 4)",
-                    "SNAT":   "(bv 3 4)",
-                    "RETURN": "(bv 4 4)",
-                }[tgt]
-                lines.append(indent + f"    {tgt}")
-            else:
-                tgt = tgt.lower().replace("-", "_")
-                subcall = f"({tgt.lower()} srcPort srcIP dstPort dstIP protocol cstate)"
-    
-                lines.append(indent + f"(if {cond}")
-                lines.append(indent + f"    (let ([decision {subcall}])")
-                lines.append(indent + f"      (if (not (bveq decision (bv 5 4)))")
-                lines.append(indent + f"          decision")
-                lines.append(indent + f"          (bv 5 4)))")
-                # indent deeper
-                indent += "  "
-            indent += "  "  # deeper nesting
-            print(lines)
-            exit(0)
+        print(f"chain.rules: {chain.rules}")
 
         # default policy fallback
         if chain.policy == "ACCEPT":
@@ -123,12 +112,37 @@ def gen_chain_spec(chains):
             default = "(bv 2 4)"  # DNAT
         else:
             default = "(bv 1 4)"  # no policy, default DROP
+        
+        code_to_print_l = []
+        default_code = f"[else {default}]"
+        code_to_print_l.append(default_code)
+        code_to_replace_l = []
+        # Build chain from bottom to top
+        for rule in reversed(chain.rules):
+            cond = gen_rule_condition(rule)
+            call_block = gen_rule_call(rule)
+            if len(code_to_replace_l) == 0:
+                call_block = call_block.replace("NEXT", default)
+            else:
+                code = code_to_replace_l[-1]  # previous code
+                # Insert previous code as NEXT
+                call_block = call_block.replace("NEXT", "(" + code + ")")
 
-        lines.append(indent + default)
+            # Wrap inside cond (this is the *new* code)
+            code_to_print = f"[{cond} {call_block}]"  # to print the code 
+            code_to_print_l.append(code_to_print)
+            code_to_replace = f"cond [{cond} {call_block}]"
+            code_to_replace_l.append(code_to_replace)
+            # code_to_fill = f"(cond [{cond} {call_block}] [else {default}])" # to fill in the previous rule's code
+            print(f"After processing rule {rule.num}, code is:\n{code_to_print}\n")
 
-        # close parentheses
-        for _ in chain.rules:
-            lines.append(")")
-
-        lines.append(")")
+        lines.append(f"{indent}(cond")
+        for code in reversed(code_to_print_l):
+            lines.append(f"{indent}{code}")        
+        print(f"Final code for chain {chain.name}:\n{code}")
+        lines.append(f"{indent})")  # end of cond
+        print("\n".join(lines))
+        exit(0)
+    lines.append(")")  # end of function
+    
     return "\n".join(lines)
