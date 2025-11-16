@@ -4,21 +4,32 @@ import re
 ACTIONS = {"ACCEPT", "DROP", "RETURN", "DNAT", "SNAT", "NODECISION"}
 
 def parse_cidr(cidr):
+    neg = False
+    cidr = cidr.strip()
+
+    if cidr.startswith("!"):
+        neg = True
+        cidr = cidr[1:].strip()
+
+    # no "/" → treat as full host match
     if "/" not in cidr:
         ip = int(ipaddress.IPv4Address(cidr))
-        return ip, 0xFFFFFFFF
+        return neg, ip, 0xFFFFFFFF
 
     net = ipaddress.IPv4Network(cidr, strict=False)
-    return int(net.network_address), int(net.netmask)
+    return neg, int(net.network_address), int(net.netmask)
 
 
 def parse_ctstate(extras: str):
     if extras is None:
-        return None
-    m = re.search(r'ctstate\s+([A-Z,]+)', extras)    
+        return False, None
+    m = re.search(r'(!\s*)?ctstate\s+([A-Z,]+)', extras)
     if not m:
-        return None
-    return m.group(1).split(",")
+        return False, None
+    negate = (m.group(1) is not None)  # True if "!" exists
+    states = m.group(2).split(",")
+    
+    return negate, states
 
 
 def proto_condition(prot):
@@ -32,14 +43,21 @@ def proto_condition(prot):
 
 
 def ip_condition(var, cidr):
-    net, mask = parse_cidr(cidr)
-    return f"(bveq (bvand {var} (bv {mask} 32)) (bv {net} 32))"
+    neg, net, mask = parse_cidr(cidr)
+    cond = f"(bveq (bvand {var} (bv {mask} 32)) (bv {net} 32))"
+    if neg:
+        return f"(not {cond})"
+    return cond
 
 
-def ctstate_condition(states):
+def ctstate_condition(net, states):
     conds = [f"(bveq ctstate {s})" for s in states]
+    if net:
+        conds = [f"(not {c})" for c in conds]
     if len(conds) == 1:
         return conds[0]
+    if net:
+        return f"(and {' '.join(conds)})"
     return f"(or {' '.join(conds)})"
 
 
@@ -62,10 +80,9 @@ def gen_rule_condition(rule):
         conditions.append(ip_condition("dstIP", rule.dst))
     else:
         conditions.append("#t")
-
-    ct = parse_ctstate(rule.extras)
+    neg, ct = parse_ctstate(rule.extras)
     if ct:
-        conditions.append(ctstate_condition(ct))
+        conditions.append(ctstate_condition(neg, ct))
     else:
         conditions.append("#t")
 
@@ -75,19 +92,31 @@ def gen_rule_condition(rule):
 def gen_rule_call(rule, indent="    "):
     """
     Generate the Rosette code for calling a rule:
-    (let ([decision (KUBE_NODEPORTS srcPort srcIP dstPort dstIP protocol cstate)])
+    (let ([decision (KUBE_NODEPORTS srcPort srcIP dstPort dstIP protocol ctstate)])
          (if (not (bveq decision (bv 5 4)))
              decision
              NEXT))
     """
-    fname = rule.target.lower().replace("-", "_")   # Rosette identifiers cannot have '-'
-    call = f"({fname} srcPort srcIP dstPort dstIP protocol cstate)"
-    result = (
-        f"(let ([decision {call}])\n"
-        f"{indent}  (if (not (bveq decision (bv 5 4)))\n"
-        f"{indent}        decision\n"
-        f"{indent}        NEXT))"
-    )
+    fname = rule.target   # Rosette identifiers cannot have '-'
+    if fname in ACTIONS:
+        if fname == "ACCEPT":
+            call = "(bv 0 4)"  # ACCEPT
+        elif fname == "DROP":
+            call = "(bv 1 4)"  # DROP
+        elif fname == "DNAT":
+            call = "(bv 2 4)"  # DNAT
+        elif fname == "SNAT":
+            call = "(bv 3 4)"  # SNAT
+        result = f"({call})\n"
+    else:
+        fname = fname.lower().replace("-", "_")
+        call = f"({fname} srcPort srcIP dstPort dstIP protocol ctstate)"
+        result = (
+            f"(let ([decision {call}])\n"
+            f"{indent}  (if (not (bveq decision (bv 5 4)))\n"
+            f"{indent}        decision\n"
+            f"{indent}        NEXT))"
+        )
     return result
 
 '''
@@ -101,7 +130,6 @@ def gen_chain_spec(chains):
         lines.append(f"(define ({fn} srcPort srcIP dstPort dstIP protocol ctstate)")
 
         indent = "  "
-        print(f"chain.rules: {chain.rules}")
 
         # default policy fallback
         if chain.policy == "ACCEPT":
@@ -134,15 +162,12 @@ def gen_chain_spec(chains):
             code_to_replace = f"cond [{cond} {call_block}]"
             code_to_replace_l.append(code_to_replace)
             # code_to_fill = f"(cond [{cond} {call_block}] [else {default}])" # to fill in the previous rule's code
-            print(f"After processing rule {rule.num}, code is:\n{code_to_print}\n")
 
         lines.append(f"{indent}(cond")
         for code in reversed(code_to_print_l):
             lines.append(f"{indent}{code}")        
-        print(f"Final code for chain {chain.name}:\n{code}")
         lines.append(f"{indent})")  # end of cond
-        print("\n".join(lines))
-        exit(0)
-    lines.append(")")  # end of function
+        
+        lines.append(")")  # end of function
     
     return "\n".join(lines)
