@@ -125,6 +125,11 @@ Output: Rosette specification code for the chain
 '''
 def gen_chain_spec(chains):
     lines = []
+    lines.append("(define NEW (bv 0 4))")
+    lines.append("(define RELATED (bv 1 4))")
+    lines.append("(define ESTABLISHED (bv 2 4))")
+    lines.append("(define INVALID (bv 3 4))")
+    lines.append("(define DNAT (bv 4 4))")
     for chain in chains:
         fn = chain.name.lower().replace("-", "_")   # e.g., "INPUT" → chain name
         lines.append(f"(define ({fn} srcPort srcIP dstPort dstIP protocol ctstate)")
