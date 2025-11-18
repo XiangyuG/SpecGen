@@ -95,7 +95,7 @@ def gen_rule_condition(rule):
 def gen_rule_call(rule, indent="    "):
     """
     Generate the Rosette code for calling a rule:
-    (let ([decision (KUBE_NODEPORTS srcPort srcIP dstPort dstIP protocol ctstate)])
+    (let ([decision (FUNCNAME srcPort srcIP dstPort dstIP protocol ctstate)])
          (if (not (bveq decision (bv 5 4)))
              decision
              NEXT))
@@ -152,24 +152,27 @@ def gen_chain_spec(chains):
         code_to_print_l = []
         default_code = f"[else {default}]"
         code_to_print_l.append(default_code)
-        code_to_replace_l = []
+
         # Build chain from bottom to top
         for rule in reversed(chain.rules):
             cond = gen_rule_condition(rule)
             call_block = gen_rule_call(rule)
-            if len(code_to_replace_l) == 0:
+            if len(code_to_print_l) == 1:
                 call_block = call_block.replace("NEXT", default)
+                # print(f"code_to_replace_l is empty {call_block}")
             else:
-                code = code_to_replace_l[-1]  # previous code
+                code = ""
+                # Concatenate all previous code pieces
+                for code_piece in reversed(code_to_print_l):
+                    code += code_piece
                 # Insert previous code as NEXT
-                call_block = call_block.replace("NEXT", "(" + code + ")")
+                call_block = call_block.replace("NEXT", "(cond\n" + code + ")")
+                # print(f"code_to_replace_l is not empty {call_block}")
 
             # Wrap inside cond (this is the *new* code)
             code_to_print = f"[{cond} {call_block}]\n"  # to print the code 
             code_to_print_l.append(code_to_print)
-            code_to_replace = f"cond [{cond} {call_block}]\n" + default_code
-            code_to_replace_l.append(code_to_replace)
-            # code_to_fill = f"(cond [{cond} {call_block}] [else {default}])" # to fill in the previous rule's code
+            
         lines.append(f"{indent}(cond")
         for code in reversed(code_to_print_l):
             lines.append(f"{indent}{code}")        
