@@ -110,7 +110,7 @@ def gen_rule_call(rule, indent="    "):
             call = "(bv 2 4)"  # DNAT
         elif fname == "SNAT":
             call = "(bv 3 4)"  # SNAT
-        result = f"({call})\n"
+        result = f"{call}\n"
     else:
         fname = fname.lower().replace("-", "_")
         call = f"({fname} srcPort srcIP dstPort dstIP protocol ctstate)"
@@ -165,12 +165,11 @@ def gen_chain_spec(chains):
                 call_block = call_block.replace("NEXT", "(" + code + ")")
 
             # Wrap inside cond (this is the *new* code)
-            code_to_print = f"[{cond} {call_block}]\n" + default_code  # to print the code 
+            code_to_print = f"[{cond} {call_block}]\n"  # to print the code 
             code_to_print_l.append(code_to_print)
             code_to_replace = f"cond [{cond} {call_block}]\n" + default_code
             code_to_replace_l.append(code_to_replace)
             # code_to_fill = f"(cond [{cond} {call_block}] [else {default}])" # to fill in the previous rule's code
-
         lines.append(f"{indent}(cond")
         for code in reversed(code_to_print_l):
             lines.append(f"{indent}{code}")        
