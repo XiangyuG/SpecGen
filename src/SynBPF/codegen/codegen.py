@@ -17,6 +17,9 @@ def parse_cidr(cidr):
         return neg, ip, 0xFFFFFFFF
 
     net = ipaddress.IPv4Network(cidr, strict=False)
+    # debug the mask and ip address
+    # print(neg, net.network_address, net.netmask)
+    # print(neg, int(net.network_address), int(net.netmask))
     return neg, int(net.network_address), int(net.netmask)
 
 
@@ -144,7 +147,7 @@ def gen_chain_spec(chains):
         elif chain.policy == "DNAT":
             default = "(bv 2 4)"  # DNAT
         else:
-            default = "(bv 1 4)"  # no policy, default DROP
+            default = "(bv 5 4)"  # no policy
         
         code_to_print_l = []
         default_code = f"[else {default}]"
@@ -162,9 +165,9 @@ def gen_chain_spec(chains):
                 call_block = call_block.replace("NEXT", "(" + code + ")")
 
             # Wrap inside cond (this is the *new* code)
-            code_to_print = f"[{cond} {call_block}]"  # to print the code 
+            code_to_print = f"[{cond} {call_block}]\n" + default_code  # to print the code 
             code_to_print_l.append(code_to_print)
-            code_to_replace = f"cond [{cond} {call_block}]"
+            code_to_replace = f"cond [{cond} {call_block}]\n" + default_code
             code_to_replace_l.append(code_to_replace)
             # code_to_fill = f"(cond [{cond} {call_block}] [else {default}])" # to fill in the previous rule's code
 
