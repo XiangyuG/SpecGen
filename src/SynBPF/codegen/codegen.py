@@ -130,7 +130,7 @@ def gen_rule_call(rule, indent="    "):
 Input: a chain of iptable chains
 Output: Rosette specification code for the chain
 '''
-def gen_chain_spec(chains):
+def gen_chain_spec(chains, iptable_func):
     lines = []
     lines.append("(define NEW (bv 0 4))")
     lines.append("(define RELATED (bv 1 4))")
@@ -152,7 +152,7 @@ def gen_chain_spec(chains):
             default = "(bv 2 4)"  # DNAT
         else:
             default = "(bv 5 4)"  # no policy
-        
+
         code_to_print_l = []
         default_code = f"[else {default}]"
         code_to_print_l.append(default_code)
