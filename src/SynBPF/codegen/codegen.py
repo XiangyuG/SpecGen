@@ -1,7 +1,9 @@
 import ipaddress
 import re
 
-ACTIONS = {"ACCEPT", "DROP", "REJECT", "RETURN", "DNAT", "SNAT", "NODECISION", "MASQUERADE"}
+ACTIONS = {"ACCEPT", "DROP", "REJECT", "RETURN", "SNAT", "NODECISION", "MASQUERADE"}
+
+chain_parameters = "srcPort srcIP dstPort dstIP protocol ctstate mark"
 
 def parse_cidr(cidr):
     neg = False
@@ -81,6 +83,29 @@ def parse_mark(extras: str):
 
     return None, None
 
+def parse_dnat(extras: str):
+    """
+      DNAT rule extras, example:
+        tcp to:10.244.0.4:53
+        udp to:10.244.0.4:53
+    """
+
+    if extras is None:
+        return None, None, None
+
+    # Match:  tcp to:10.244.0.4:53
+    #         udp to:10.244.0.4:53
+    m = re.search(r'\b(tcp|udp)\b\s+to:(\d+\.\d+\.\d+\.\d+):(\d+)', extras)
+    if not m:
+        return None, None, None
+
+    proto = m.group(1)              # tcp / udp
+    ip = m.group(2)                 # 10.244.0.4
+    ip_int = int(ipaddress.IPv4Address(ip))
+    port = int(m.group(3))          # 53
+
+    return proto, ip_int, port
+
 
 def gen_rule_condition(rule):
     '''
@@ -113,7 +138,7 @@ def gen_rule_condition(rule):
 def gen_rule_call(rule, indent="    "):
     """
     Generate the Rosette code for calling a rule:
-    (let ([decision (FUNCNAME srcPort srcIP dstPort dstIP protocol ctstate)])
+    (let ([decision (FUNCNAME srcPort srcIP dstPort dstIP protocol ctstate mark)])
          (if (not (bveq decision (bv 5 4)))
              decision
              NEXT))
@@ -124,8 +149,6 @@ def gen_rule_call(rule, indent="    "):
             call = "(bv 0 4) ;;; ACCEPT"  # ACCEPT
         elif fname == "DROP":
             call = "(bv 1 4) ;;; DROP"  # DROP
-        elif fname == "DNAT":
-            call = "(bv 2 4) ;;; DNAT"  # DNAT
         elif fname == "SNAT":
             call = "(bv 3 4) ;;; SNAT"  # SNAT
         elif fname == "REJECT":
@@ -135,14 +158,23 @@ def gen_rule_call(rule, indent="    "):
         elif fname == "MASQUERADE":
             call = "(bv 7 4) ;;; MASQUERADE"  # MASQUERADE
         result = f"{call}\n"
-    if fname == "MARK":
+    if fname == "DNAT":
+        proto, ip, port = parse_dnat(rule.extras)
+
+        call = "(bv 2 4)"  # DNAT
+        result = (
+            f"(set! dstIP (bv {ip} 32))\n"
+            f"(set! dstPort (bv {port} 16))\n"
+            f"{call}"
+        )
+    elif fname == "MARK":
         op, val = parse_mark(rule.extras)
         if op == "or":
             op = "bvor"
         elif op == "xor":
             op = "bvxor"
         else:
-            assert False, "unsupported operation"
+            assert False, "unsupported operation for MARK at this point"
         call = "(bv 8 4)"  # MARK
         print(f"op: {op}, val:{val}")
         result = (
@@ -151,7 +183,7 @@ def gen_rule_call(rule, indent="    "):
         )
     else:
         fname = fname.lower().replace("-", "_")
-        call = f"({fname} srcPort srcIP dstPort dstIP protocol ctstate mark)"
+        call = f"({fname} {chain_parameters})"
         result = (
             f"(let ([decision {call}])\n"
             f"{indent}  (if (and (not (bveq decision (bv 5 4))) (not (bveq decision (bv 6 4))))\n"
@@ -173,7 +205,7 @@ def gen_chain_spec(chains, iptable_func):
     lines.append("(define DNAT (bv 4 4))")
     for chain in chains:
         fn = chain.name.lower().replace("-", "_")   # e.g., "INPUT" → chain name
-        lines.append(f"(define ({fn} srcPort srcIP dstPort dstIP protocol ctstate)")
+        lines.append(f"(define ({fn} {chain_parameters})")
 
         indent = "  "
 
