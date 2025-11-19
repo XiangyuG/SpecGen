@@ -1,7 +1,7 @@
 import ipaddress
 import re
 
-ACTIONS = {"ACCEPT", "DROP", "REJECT", "RETURN", "DNAT", "SNAT", "NODECISION"}
+ACTIONS = {"ACCEPT", "DROP", "REJECT", "RETURN", "DNAT", "SNAT", "NODECISION", "MASQUERADE"}
 
 def parse_cidr(cidr):
     neg = False
@@ -64,6 +64,24 @@ def ctstate_condition(net, states):
     return f"(or {' '.join(conds)})"
 
 
+def parse_mark(extras: str):
+    """
+      mark setting:
+      MARK or 0x4000
+    """
+    if extras is None:
+        return None
+
+    # Case 1: MARK target (setting mark)
+    m = re.search(r'MARK\s+(or|and|xor)\s+0x([0-9a-fA-F]+)', extras)
+    if m:
+        op = m.group(1)
+        val = int(m.group(2), 16)
+        return op, val
+
+    return None, None
+
+
 def gen_rule_condition(rule):
     '''
     Input: an iptable rule
@@ -114,10 +132,26 @@ def gen_rule_call(rule, indent="    "):
             call = "(bv 4 4) ;;; REJECT"  # REJECT
         elif fname == "RETURN":
             call = "(bv 6 4) ;;; RETURN"  # RETURN
+        elif fname == "MASQUERADE":
+            call = "(bv 7 4) ;;; MASQUERADE"  # MASQUERADE
         result = f"{call}\n"
+    if fname == "MARK":
+        op, val = parse_mark(rule.extras)
+        if op == "or":
+            op = "bvor"
+        elif op == "xor":
+            op = "bvxor"
+        else:
+            assert False, "unsupported operation"
+        call = "(bv 8 4)"  # MARK
+        print(f"op: {op}, val:{val}")
+        result = (
+            f"(set! mark ({op} mark (bv {val} 16)))\n"
+            f"{call}"
+        )
     else:
         fname = fname.lower().replace("-", "_")
-        call = f"({fname} srcPort srcIP dstPort dstIP protocol ctstate)"
+        call = f"({fname} srcPort srcIP dstPort dstIP protocol ctstate mark)"
         result = (
             f"(let ([decision {call}])\n"
             f"{indent}  (if (and (not (bveq decision (bv 5 4))) (not (bveq decision (bv 6 4))))\n"
