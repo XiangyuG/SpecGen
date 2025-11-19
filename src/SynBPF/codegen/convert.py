@@ -37,6 +37,12 @@ def main():
         help="Path to iptables dump text file (e.g., /tmp/iptables_dump.txt)"
     )
 
+    parser.add_argument(
+        "func",
+        type=str,
+        help="Function of iptables. Either nat or filter at this point"
+    )
+
     args = parser.parse_args()
 
     # Step 1: Parse the input iptable file
@@ -44,7 +50,9 @@ def main():
     print_chains(chains) # print for debugging
 
     # Step 2: Generate code to Rosette's specification format
-    codegen_output = gen_chain_spec(chains)
+    iptable_func = args.func
+    assert iptable_func == "nat" or iptable_func == "filter", "Unsupported iptable func"
+    codegen_output = gen_chain_spec(chains, iptable_func)
     print("Generated Rosette Specification Code:")
     print(codegen_output)
     
