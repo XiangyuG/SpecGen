@@ -1,7 +1,7 @@
 import ipaddress
 import re
 
-ACTIONS = {"ACCEPT", "DROP", "RETURN", "DNAT", "SNAT", "NODECISION"}
+ACTIONS = {"ACCEPT", "DROP", "REJECT", "RETURN", "DNAT", "SNAT", "NODECISION"}
 
 def parse_cidr(cidr):
     neg = False
@@ -39,9 +39,9 @@ def proto_condition(prot):
     if prot in ("*"):
         return "#t"
     if prot.lower() == "tcp":
-        return "(bveq proto (bv 6 8))"
+        return "(bveq protocol (bv 6 8))"
     if prot.lower() == "udp":
-        return "(bveq proto (bv 17 8))"
+        return "(bveq protocol (bv 17 8))"
     return "#t"
 
 
@@ -103,20 +103,24 @@ def gen_rule_call(rule, indent="    "):
     fname = rule.target   # Rosette identifiers cannot have '-'
     if fname in ACTIONS:
         if fname == "ACCEPT":
-            call = "(bv 0 4)"  # ACCEPT
+            call = "(bv 0 4) ;;; ACCEPT"  # ACCEPT
         elif fname == "DROP":
-            call = "(bv 1 4)"  # DROP
+            call = "(bv 1 4) ;;; DROP"  # DROP
         elif fname == "DNAT":
-            call = "(bv 2 4)"  # DNAT
+            call = "(bv 2 4) ;;; DNAT"  # DNAT
         elif fname == "SNAT":
-            call = "(bv 3 4)"  # SNAT
+            call = "(bv 3 4) ;;; SNAT"  # SNAT
+        elif fname == "REJECT":
+            call = "(bv 4 4) ;;; REJECT"  # REJECT
+        elif fname == "RETURN":
+            call = "(bv 6 4) ;;; RETURN"  # RETURN
         result = f"{call}\n"
     else:
         fname = fname.lower().replace("-", "_")
         call = f"({fname} srcPort srcIP dstPort dstIP protocol ctstate)"
         result = (
             f"(let ([decision {call}])\n"
-            f"{indent}  (if (not (bveq decision (bv 5 4)))\n"
+            f"{indent}  (if (and (not (bveq decision (bv 5 4))) (not (bveq decision (bv 6 4))))\n"
             f"{indent}        decision\n"
             f"{indent}        NEXT))"
         )
