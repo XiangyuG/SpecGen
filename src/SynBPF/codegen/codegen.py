@@ -106,8 +106,23 @@ def parse_dnat(extras: str):
 
     return proto, ip_int, port
 
+def parse_probability(extras: str):
+    """
+    Parse statistic mode random probability from extras.
+    Example:
+      "statistic mode random probability 0.50000000000"
+    """
 
-def gen_rule_condition(rule):
+    if extras is None:
+        return None
+
+    m = re.search(r'probability\s+([0-9.]+)', extras)
+    if not m:
+        return None
+    # Scale by 100 and then rounding
+    return int(float(m.group(1)) * 100)
+
+def gen_rule_condition(rule, prob = None):
     '''
     Input: an iptable rule
     Output: Rosette condition code for the rule
@@ -131,6 +146,10 @@ def gen_rule_condition(rule):
         conditions.append(ctstate_condition(neg, ct))
     else:
         conditions.append("#t")
+    
+    # set the prob to be between 0 and 99. set the threshold to be 8-bit
+    if prob != None:
+        conditions.append(f"(bvslt rand (bv {prob} 8))")
 
     return f"(and {' '.join(conditions)})"
 
@@ -158,7 +177,7 @@ def gen_rule_call(rule, indent="    "):
         elif fname == "MASQUERADE":
             call = "(bv 7 4) ;;; MASQUERADE"  # MASQUERADE
         result = f"{call}\n"
-    if fname == "DNAT":
+    elif fname == "DNAT":
         proto, ip, port = parse_dnat(rule.extras)
 
         call = "(bv 2 4)"  # DNAT
@@ -176,7 +195,6 @@ def gen_rule_call(rule, indent="    "):
         else:
             assert False, "unsupported operation for MARK at this point"
         call = "(bv 8 4)"  # MARK
-        print(f"op: {op}, val:{val}")
         result = (
             f"(set! mark ({op} mark (bv {val} 16)))\n"
             f"{call}"
@@ -205,6 +223,19 @@ def gen_chain_spec(chains, iptable_func):
     lines.append("(define DNAT (bv 4 4))")
     for chain in chains:
         fn = chain.name.lower().replace("-", "_")   # e.g., "INPUT" → chain name
+        # TODO: Preprocess the load-balancing chain starting from KUBE-SVC
+        rand_l = []
+        if fn[0:8] == "kube_svc":
+            for rule in chain.rules:
+                rand_l.append(parse_probability(rule.extras))
+            val = 0
+            for i in range(len(rand_l)):
+                rv = rand_l[i]
+                if rv != None:
+                    val += rv
+                    rand_l[i] = val
+            rand_l[len(rand_l) - 1] = (100 - val)
+
         lines.append(f"(define ({fn} {chain_parameters})")
 
         indent = "  "
@@ -224,8 +255,12 @@ def gen_chain_spec(chains, iptable_func):
         code_to_print_l.append(default_code)
 
         # Build chain from bottom to top
-        for rule in reversed(chain.rules):
-            cond = gen_rule_condition(rule)
+        for i in range(len(chain.rules) - 1, -1, -1):
+            rule = chain.rules[i]
+            if len(rand_l) == 0:
+                cond = gen_rule_condition(rule)
+            else:
+                cond = gen_rule_condition(rule, rand_l[i])
             call_block = gen_rule_call(rule)
             if len(code_to_print_l) == 1:
                 call_block = call_block.replace("NEXT", default)
