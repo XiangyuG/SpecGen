@@ -3,7 +3,7 @@ import re
 
 ACTIONS = {"ACCEPT", "DROP", "REJECT", "RETURN", "SNAT", "NODECISION", "MASQUERADE"}
 
-chain_parameters = "srcPort srcIP dstPort dstIP protocol ctstate mark"
+chain_parameters = "srcPort srcIP dstPort dstIP protocol ctstate mark rand"
 
 def parse_cidr(cidr):
     neg = False
