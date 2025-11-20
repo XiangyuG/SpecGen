@@ -185,7 +185,7 @@ def gen_rule_call(rule, constant_list, indent="    "):
             call = "(bv 6 4) ;;; RETURN"  # RETURN
         elif fname == "MASQUERADE":
             call = "(bv 7 4) ;;; MASQUERADE"  # MASQUERADE
-        result = f"{call}\n"
+        result = f"(list {call} {chain_parameters})\n"
     elif fname == "DNAT":
         proto, ip, port = parse_dnat(rule.extras)
         constant_list.append(f"(bv {ip} 32)")
@@ -194,7 +194,7 @@ def gen_rule_call(rule, constant_list, indent="    "):
         result = (
             f"(set! dstIP (bv {ip} 32))\n"
             f"(set! dstPort (bv {port} 16))\n"
-            f"{call}"
+            f"(list {call} {chain_parameters})\n"
         )
     elif fname == "MARK":
         op, val = parse_mark(rule.extras)
@@ -208,15 +208,15 @@ def gen_rule_call(rule, constant_list, indent="    "):
         constant_list.append(f"(bv {val} 16)")
         result = (
             f"(set! mark ({op} mark (bv {val} 16)))\n"
-            f"{call}"
+            f"(list {call} {chain_parameters})\n"
         )
     else:
         fname = fname.lower().replace("-", "_")
         call = f"({fname} {chain_parameters})"
         result = (
-            f"(let ([decision {call}])\n"
+            f"(let ([decision (list-ref {call} 0)])\n"
             f"{indent}  (if (and (not (bveq decision (bv 5 4))) (not (bveq decision (bv 6 4))))\n"
-            f"{indent}        decision\n"
+            f"{indent}        (list decision {chain_parameters})\n"
             f"{indent}        NEXT))"
         )
     return result, constant_list
@@ -235,7 +235,7 @@ def unique_list(lst):
 Input: a chain of iptable chains
 Output: Rosette specification code for the chain
 '''
-def gen_chain_spec(chains, iptable_func):
+def gen_chain_spec(chains):
     constant_list = []
     lines = []
     lines.append("(define NEW (bv 0 4))")
@@ -273,7 +273,7 @@ def gen_chain_spec(chains, iptable_func):
             default = "(bv 5 4)"  # no policy
 
         code_to_print_l = []
-        default_code = f"[else {default}]"
+        default_code = f"[else (list {default} {chain_parameters})]"
         code_to_print_l.append(default_code)
 
         # Build chain from bottom to top
@@ -285,7 +285,7 @@ def gen_chain_spec(chains, iptable_func):
                 cond, constant_list = gen_rule_condition(rule, constant_list, rand_l[i])
             call_block, constant_list = gen_rule_call(rule, constant_list)
             if len(code_to_print_l) == 1:
-                call_block = call_block.replace("NEXT", default)
+                call_block = call_block.replace("NEXT", f"(list {default} {chain_parameters})")
                 # print(f"code_to_replace_l is empty {call_block}")
             else:
                 code = ""
