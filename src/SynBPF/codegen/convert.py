@@ -1,6 +1,8 @@
-import argparse
 from SynBPF.frontends.parser import parse_iptables
 from SynBPF.codegen.codegen import gen_chain_spec
+
+import argparse
+import json
 
 def parse_file(filename: str):
     """Parse one iptables dump file."""
@@ -52,9 +54,12 @@ def main():
     # Step 2: Generate code to Rosette's specification format
     iptable_func = args.func
     assert iptable_func == "nat" or iptable_func == "filter", "Unsupported iptable func"
-    codegen_output = gen_chain_spec(chains, iptable_func)
+    codegen_output, constant_list = gen_chain_spec(chains, iptable_func)
     print("Generated Rosette Specification Code:")
-    print(codegen_output)
+    # print(codegen_output)
+    # print(f"constant_list = {constant_list}")
+    with open("/tmp/constants.json", "w") as f:
+        json.dump(constant_list, f, indent=2)
     
 if __name__ == "__main__":
     main()

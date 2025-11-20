@@ -37,22 +37,26 @@ def parse_ctstate(extras: str):
     return negate, states
 
 
-def proto_condition(prot):
+def proto_condition(prot, constant_list):
     if prot in ("*"):
-        return "#t"
+        return "#t", constant_list
     if prot.lower() == "tcp":
-        return "(bveq protocol (bv 6 8))"
+        constant_list.append("(bv 6 8)")
+        return "(bveq protocol (bv 6 8))", constant_list
     if prot.lower() == "udp":
-        return "(bveq protocol (bv 17 8))"
-    return "#t"
+        constant_list.append("(bv 17 8)")
+        return "(bveq protocol (bv 17 8))", constant_list
+    return "#t", constant_list
 
 
-def ip_condition(var, cidr):
+def ip_condition(var, cidr, constant_list):
     neg, net, mask = parse_cidr(cidr)
+    constant_list.append(f"(bv {mask} 32)")
+    constant_list.append(f"(bv {net} 32)")
     cond = f"(bveq (bvand {var} (bv {mask} 32)) (bv {net} 32))"
     if neg:
-        return f"(not {cond})"
-    return cond
+        return f"(not {cond})", constant_list
+    return cond, constant_list
 
 
 def ctstate_condition(net, states):
@@ -122,7 +126,7 @@ def parse_probability(extras: str):
     # Scale by 100 and then rounding
     return int(float(m.group(1)) * 100)
 
-def gen_rule_condition(rule, prob = None):
+def gen_rule_condition(rule, constant_list, prob = None):
     '''
     Input: an iptable rule
     Output: Rosette condition code for the rule
@@ -130,17 +134,22 @@ def gen_rule_condition(rule, prob = None):
 
     conditions = []
 
-    conditions.append(proto_condition(rule.prot))
+    proto_cond, constant_list = proto_condition(rule.prot, constant_list)
+    conditions.append(proto_cond)
 
     if rule.src != "0.0.0.0/0":
-        conditions.append(ip_condition("srcIP", rule.src))
+        ip_cond, constant_list = ip_condition("srcIP", rule.src, constant_list)
+        conditions.append(ip_cond)
     else:
         conditions.append("#t")
+        constant_list.append("(bv 0 32)")
 
     if rule.dst != "0.0.0.0/0":
-        conditions.append(ip_condition("dstIP", rule.dst))
+        ip_cond, constant_list = ip_condition("dstIP", rule.dst, constant_list)
+        conditions.append(ip_cond)
     else:
         conditions.append("#t")
+        constant_list.append("(bv 0 32)")
     neg, ct = parse_ctstate(rule.extras)
     if ct:
         conditions.append(ctstate_condition(neg, ct))
@@ -151,10 +160,10 @@ def gen_rule_condition(rule, prob = None):
     if prob != None:
         conditions.append(f"(bvslt rand (bv {prob} 8))")
 
-    return f"(and {' '.join(conditions)})"
+    return f"(and {' '.join(conditions)})", constant_list
 
 
-def gen_rule_call(rule, indent="    "):
+def gen_rule_call(rule, constant_list, indent="    "):
     """
     Generate the Rosette code for calling a rule:
     (let ([decision (FUNCNAME srcPort srcIP dstPort dstIP protocol ctstate mark)])
@@ -179,7 +188,8 @@ def gen_rule_call(rule, indent="    "):
         result = f"{call}\n"
     elif fname == "DNAT":
         proto, ip, port = parse_dnat(rule.extras)
-
+        constant_list.append(f"(bv {ip} 32)")
+        constant_list.append(f"(bv {port} 16)")
         call = "(bv 2 4)"  # DNAT
         result = (
             f"(set! dstIP (bv {ip} 32))\n"
@@ -195,6 +205,7 @@ def gen_rule_call(rule, indent="    "):
         else:
             assert False, "unsupported operation for MARK at this point"
         call = "(bv 8 4)"  # MARK
+        constant_list.append(f"(bv {val} 16)")
         result = (
             f"(set! mark ({op} mark (bv {val} 16)))\n"
             f"{call}"
@@ -208,6 +219,16 @@ def gen_rule_call(rule, indent="    "):
             f"{indent}        decision\n"
             f"{indent}        NEXT))"
         )
+    return result, constant_list
+
+
+def unique_list(lst):
+    seen = set()
+    result = []
+    for x in lst:
+        if x not in seen:
+            result.append(x)
+            seen.add(x)
     return result
 
 '''
@@ -215,6 +236,7 @@ Input: a chain of iptable chains
 Output: Rosette specification code for the chain
 '''
 def gen_chain_spec(chains, iptable_func):
+    constant_list = []
     lines = []
     lines.append("(define NEW (bv 0 4))")
     lines.append("(define RELATED (bv 1 4))")
@@ -258,10 +280,10 @@ def gen_chain_spec(chains, iptable_func):
         for i in range(len(chain.rules) - 1, -1, -1):
             rule = chain.rules[i]
             if len(rand_l) == 0:
-                cond = gen_rule_condition(rule)
+                cond, constant_list = gen_rule_condition(rule, constant_list)
             else:
-                cond = gen_rule_condition(rule, rand_l[i])
-            call_block = gen_rule_call(rule)
+                cond, constant_list = gen_rule_condition(rule, constant_list, rand_l[i])
+            call_block, constant_list = gen_rule_call(rule, constant_list)
             if len(code_to_print_l) == 1:
                 call_block = call_block.replace("NEXT", default)
                 # print(f"code_to_replace_l is empty {call_block}")
@@ -284,5 +306,5 @@ def gen_chain_spec(chains, iptable_func):
         lines.append(f"{indent})")  # end of cond
         
         lines.append(")")  # end of function
-    
-    return "\n".join(lines)
+    constant_list = unique_list(constant_list)    
+    return "\n".join(lines), constant_list
