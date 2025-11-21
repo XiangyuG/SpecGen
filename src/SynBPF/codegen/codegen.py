@@ -135,31 +135,30 @@ def gen_rule_condition(rule, constant_list, prob = None):
     conditions = []
 
     proto_cond, constant_list = proto_condition(rule.prot, constant_list)
-    conditions.append(proto_cond)
+    if proto_cond != "#t":
+        conditions.append(proto_cond)
 
     if rule.src != "0.0.0.0/0":
         ip_cond, constant_list = ip_condition("srcIP", rule.src, constant_list)
         conditions.append(ip_cond)
     else:
-        conditions.append("#t")
         constant_list.append("(bv 0 32)")
 
     if rule.dst != "0.0.0.0/0":
         ip_cond, constant_list = ip_condition("dstIP", rule.dst, constant_list)
         conditions.append(ip_cond)
     else:
-        conditions.append("#t")
         constant_list.append("(bv 0 32)")
     neg, ct = parse_ctstate(rule.extras)
     if ct:
         conditions.append(ctstate_condition(neg, ct))
-    else:
-        conditions.append("#t")
     
     # set the prob to be between 0 and 99. set the threshold to be 8-bit
     if prob != None:
         conditions.append(f"(bvslt rand (bv {prob} 8))")
 
+    if len(conditions) == 0:
+        return "#t", constant_list
     return f"(and {' '.join(conditions)})", constant_list
 
 
@@ -256,7 +255,6 @@ def gen_chain_spec(chains):
                 if rv != None:
                     val += rv
                     rand_l[i] = val
-            rand_l[len(rand_l) - 1] = (100 - val)
 
         lines.append(f"(define ({fn} {chain_parameters})")
 
