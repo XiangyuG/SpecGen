@@ -215,7 +215,7 @@ def gen_rule_call(rule, constant_list, indent="    "):
         result = (
             f"(let ([decision (list-ref {call} 0)])\n"
             f"{indent}  (if (and (not (bveq decision (bv 5 4))) (not (bveq decision (bv 6 4))))\n"
-            f"{indent}        (list decision {chain_parameters})\n"
+            f"{indent}        {call}\n"
             f"{indent}        NEXT))"
         )
     return result, constant_list
