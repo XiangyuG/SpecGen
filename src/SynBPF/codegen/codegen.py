@@ -181,7 +181,7 @@ def gen_rule_call(rule, constant_list, indent="    "):
         elif fname == "REJECT":
             call = "(bv 4 4) ;;; REJECT"  # REJECT
         elif fname == "RETURN":
-            call = "(bv 6 4) ;;; RETURN"  # RETURN
+            call = "RETURN ;;; RETURN"  # RETURN
         elif fname == "MASQUERADE":
             call = "(bv 7 4) ;;; MASQUERADE"  # MASQUERADE
         result = f"(list {call} {chain_parameters})\n"
@@ -203,7 +203,7 @@ def gen_rule_call(rule, constant_list, indent="    "):
             op = "bvxor"
         else:
             assert False, "unsupported operation for MARK at this point"
-        call = "(bv 8 4)"  # MARK
+        call = "MARK"  # MARK
         constant_list.append(f"(bv {val} 16)")
         result = (
             f"(set! mark ({op} mark (bv {val} 16)))\n"
@@ -212,10 +212,13 @@ def gen_rule_call(rule, constant_list, indent="    "):
     else:
         fname = fname.lower().replace("-", "_")
         call = f"({fname} {chain_parameters})"
+        ret_list_name = "ret_list"
         result = (
-            f"(let ([decision (list-ref {call} 0)])\n"
-            f"{indent}  (if (and (not (bveq decision (bv 5 4))) (not (bveq decision (bv 6 4))))\n"
-            f"{indent}        {call}\n"
+            f"(let* ([{ret_list_name} {call}]\n"
+            f"      [decision (list-ref {ret_list_name} 0)]\n"
+            f"      [mark (list-ref {ret_list_name} 7)])\n"
+            f"{indent}  (if (and (not (bveq decision NOHIT)) (not (bveq decision RETURN)) (not (bveq decision MARK)))\n"
+            f"{indent}        {ret_list_name}\n"
             f"{indent}        NEXT))"
         )
     return result, constant_list
@@ -242,6 +245,10 @@ def gen_chain_spec(chains):
     lines.append("(define ESTABLISHED (bv 2 4))")
     lines.append("(define INVALID (bv 3 4))")
     lines.append("(define DNAT (bv 4 4))")
+
+    lines.append("(define NOHIT (bv 5 4))")
+    lines.append("(define RETURN (bv 6 4))")
+    lines.append("(define MARK (bv 8 4))")
     for chain in chains:
         fn = chain.name.lower().replace("-", "_")   # e.g., "INPUT" → chain name
         # TODO: Preprocess the load-balancing chain starting from KUBE-SVC
@@ -255,6 +262,7 @@ def gen_chain_spec(chains):
                 if rv != None:
                     val += rv
                     rand_l[i] = val
+                    constant_list.append(f"(bv {val} 8)")
 
         lines.append(f"(define ({fn} {chain_parameters})")
 
@@ -268,7 +276,7 @@ def gen_chain_spec(chains):
         elif chain.policy == "DNAT":
             default = "(bv 2 4)"  # DNAT
         else:
-            default = "(bv 5 4)"  # no policy
+            default = "NOHIT"  # no policy
 
         code_to_print_l = []
         default_code = f"[else (list {default} {chain_parameters})]"
